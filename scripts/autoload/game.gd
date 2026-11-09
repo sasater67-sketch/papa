@@ -11,8 +11,53 @@ signal fx(team: int, fx_name: String)
 signal toast(text: String, kind: String)
 signal match_over(result: Dictionary)
 signal chat(sender: String, team: int, text: String)
+## События для своего игрока от первого лица: нокаут, сбила машина, выкинула охрана и т.п.
+signal fp_event(kind: String, data: Dictionary)
+signal settings_changed
 
 enum { WALK, GOING, QUEUE, INSIDE, LEAVE }
+
+# Слои физики (общие с китами Jackpot Hotel).
+const L_WORLD := 1
+const L_PLAYER := 2
+const L_NPC := 4
+const L_INTERACT := 8
+const L_TRIGGER := 16
+const C_GOLD := Color(1.0, 0.78, 0.28)
+const C_INFO := Color(0.6, 0.85, 1.0)
+const C_DIM := Color(0.62, 0.56, 0.72)
+
+# Режим «Хозяин» (от первого лица).
+const TILL_SHARE := 0.3      # доля выручки зала, которая копится в кассе
+const INKASSO_FEE := 0.25    # инкассатор с пульта забирает четверть
+const HIT_KO := 3
+const KO_TIME := 5.0
+const KO_PROT := 6.0
+const FP_STALE_MS := 3000
+# Точки взаимодействия в координатах казино: x вдоль фасада, z>0 — участок, z<0 — зал.
+const SPOT := {
+	"till": Vector3(0.0, 0.0, -8.2),
+	"wc": Vector3(7.6, 0.0, -9.2),
+	"door": Vector3(0.0, 0.0, 1.0),
+	"ac": Vector3(6.0, 0.0, 0.4),
+	"panel": Vector3(-6.0, 0.0, 0.4),
+}
+const FIX_SPOT := {"roaches": "door", "stink": "ac", "music_break": "panel", "plumbing": "wc"}
+const HAND_SAB := {"door": "roaches", "ac": "stink", "panel": "music_break"}
+const HAND_DISCOUNT := 0.5
+const SPOT_R := 2.4
+const STEAL_SHARE := 0.5
+const LURE_COST := 15
+
+## Настройки, которые читают киты Jackpot Hotel.
+var settings := {"fov": 75.0, "sensitivity": 0.22, "shake": true}
+## Узел мира — для объёмных звуков китов.
+var world: Node3D = null
+## peer -> {p: Vector3, yaw: float, f: int, t: msec}
+var fp := {}
+var _hits := {}
+var _ko_until := {}
+var _fp_cd := {}
 
 const DOOR_Z := 16.0
 const WALK_Z := 5.5
@@ -101,9 +146,14 @@ func _new_team(t: int) -> Dictionary:
 		"name": Defs.TEAM_NAMES[t], "money": float(Defs.START_MONEY), "rep": 50.0, "level": 1,
 		"built": {}, "defense": {}, "effects": {}, "buffs": {}, "cd": {},
 		"revenge": 0, "inside": 0, "queue": 0, "cap": 8, "income": 0.0, "appeal": 0.0, "breakdown": {},
-		"ai": false, "warn_bankrupt": false,
-		"stats": {"earned": 0.0, "clients": 0, "sab_ok": 0, "sab_caught": 0, "caught_enemy": 0, "invested": 0.0},
+		"ai": false, "warn_bankrupt": false, "till": 0.0, "till_cap": till_cap_for(1),
+		"stats": {"earned": 0.0, "clients": 0, "sab_ok": 0, "sab_caught": 0, "caught_enemy": 0, "invested": 0.0,
+			"fixed": 0, "lured": 0, "ko": 0, "stolen": 0.0},
 	}
+
+
+func till_cap_for(level: int) -> float:
+	return 450.0 + 380.0 * level
 
 
 func _reset() -> void:
@@ -120,6 +170,10 @@ func _reset() -> void:
 	_bankrupt = [0.0, 0.0]
 	_attacked = [0.0, 0.0]
 	last_ents = PackedFloat32Array()
+	fp.clear()
+	_hits.clear()
+	_ko_until.clear()
+	_fp_cd.clear()
 	for t in 2:
 		_appeal_cache[t] = _calc_breakdown(t)
 
@@ -449,7 +503,7 @@ func _tier_done(t: int) -> bool:
 
 func score(t: int) -> int:
 	var st: Dictionary = teams[t]
-	return int(st.money + st.stats.invested * 0.6 + st.rep * 300.0)
+	return int(st.money + float(st.get("till", 0.0)) + st.stats.invested * 0.6 + st.rep * 300.0)
 
 
 # =============================================================================
@@ -474,7 +528,11 @@ func _handle(peer_id: int, action: Dictionary) -> void:
 	var pl: Dictionary = Net.players.get(peer_id, {})
 	if pl.is_empty():
 		return
-	var err := do_action(int(pl.team), String(pl.role), action, String(pl.name))
+	var err: String
+	if String(action.get("a", "")) == "fp":
+		err = _fp_action(peer_id, int(pl.team), String(pl.role), action, String(pl.name))
+	else:
+		err = do_action(int(pl.team), String(pl.role), action, String(pl.name))
 	if err != "":
 		_toast_peer(peer_id, err, "bad")
 
@@ -485,6 +543,8 @@ func do_action(t: int, role: String, a: Dictionary, who := "") -> String:
 	if kind == "surrender":
 		_end(1 - t, "«%s» сдался и ушёл торговать шаурмой." % teams[t].name)
 		return ""
+	if kind == "inkasso":
+		return _inkasso(t)
 	var err := can(t, role, kind, id)
 	if err != "":
 		return err
@@ -543,7 +603,37 @@ func _ability(t: int, id: String) -> void:
 			_fx(t, "pr")
 
 
-func _sabotage(t: int, role: String, id: String, cost: int) -> void:
+## Инкассатор забирает кассу без похода к ней, но берёт свою долю.
+func _inkasso(t: int) -> String:
+	var st: Dictionary = teams[t]
+	var amount := float(st.till)
+	if amount < 1.0:
+		return "Касса пуста"
+	st.till = 0.0
+	var net := amount * (1.0 - INKASSO_FEE)
+	st.money += net
+	if not is_ai(t):
+		_popup(t, "+" + Defs.money(net) + " (инкассатор)", "money")
+	_send_state()
+	return ""
+
+
+## Шанс поимки пакостника. extra — надбавка (например, хозяин казино стоит рядом).
+func catch_chance(t: int, role: String, id: String, extra := 0.0) -> float:
+	if teams[t].revenge > 0:
+		return 0.0
+	var en: Dictionary = teams[1 - t]
+	var chance := float(Defs.sab_by_id[id].catch)
+	for d in Defs.DEFENSES:
+		if en.defense.has(d.id):
+			chance += float(d.get("catch", 0.0))
+	if role == "saboteur":
+		chance -= 0.07
+	return clampf(chance + extra, 0.03, 0.85)
+
+
+## peer > 0 — пакость руками игрока от первого лица (его выкинут, если поймают).
+func _sabotage(t: int, role: String, id: String, cost: int, extra := 0.0, peer := 0) -> void:
 	var s: Dictionary = Defs.sab_by_id[id]
 	var st: Dictionary = teams[t]
 	var e := 1 - t
@@ -555,18 +645,9 @@ func _sabotage(t: int, role: String, id: String, cost: int) -> void:
 		_ev("«%s» объявил БОЛЬШОЙ РОЗЫГРЫШ! Вся улица бежит к нему." % st.name, "big", t)
 		_fx(t, "grand_raffle")
 		return
-	var revenge: bool = st.revenge > 0
-	if revenge:
+	var chance := catch_chance(t, role, id, extra)
+	if st.revenge > 0:
 		st.revenge -= 1
-	var chance := float(s.catch)
-	for d in Defs.DEFENSES:
-		if en.defense.has(d.id):
-			chance += float(d.get("catch", 0.0))
-	if role == "saboteur":
-		chance -= 0.07
-	chance = clampf(chance, 0.03, 0.85)
-	if revenge:
-		chance = 0.0
 	if randf() < chance:
 		var loss: float = (5.0 + s.tier * 3.0) * (0.6 if has(t, "lawyer") else 1.0)
 		var fine := cost * (0.25 if has(t, "lawyer") else 0.5)
@@ -579,6 +660,8 @@ func _sabotage(t: int, role: String, id: String, cost: int) -> void:
 			st.name, s.name, en.name, Defs.money(fine), int(loss), en.name], "caught", e)
 		_fx(t, "caught")
 		_popup(t, "ПОЙМАН!", "bad")
+		if peer > 0:
+			_fp_event_peer(peer, "kicked", {"team": e, "why": "Охрана «%s» поймала вас с поличным!" % en.name})
 		return
 	st.stats.sab_ok += 1
 	_attacked[e] = 30.0
@@ -674,6 +757,7 @@ func _eco(dt: float) -> void:
 		_attacked[t] = maxf(0.0, _attacked[t] - dt)
 		st.queue = queues[t].size()
 		st.cap = capacity(t)
+		st.till_cap = till_cap_for(st.level)
 		_appeal_cache[t] = _calc_breakdown(t)
 		st.breakdown = _appeal_cache[t]
 		st.appeal = appeal(t, "normal")
@@ -707,12 +791,20 @@ func _eco(dt: float) -> void:
 			_pop_acc[t] = 0.0
 
 
-func _earn(t: int, amount: float) -> void:
-	teams[t].money += amount
+## till=true — выручка зала: часть уходит в кассу (её забирают руками или инкассатором),
+## а при полной кассе эта часть сгорает.
+func _earn(t: int, amount: float, till := false) -> void:
+	var st: Dictionary = teams[t]
+	var to_money := amount
+	if till and amount > 0.0:
+		var part := amount * TILL_SHARE
+		to_money -= part
+		st.till = minf(float(st.till) + part, float(st.till_cap))
+	st.money += to_money
 	_income_acc[t] += amount
 	_pop_acc[t] += amount
 	if amount > 0.0:
-		teams[t].stats.earned += amount
+		st.stats.earned += amount
 
 
 func _end_by_time() -> void:
@@ -930,7 +1022,7 @@ func _update_peds(dt: float) -> void:
 					_say(p, "queue", 0.6)
 					_to_street(p)
 			INSIDE:
-				_earn(p.target, p.spend_rate * dt)
+				_earn(p.target, p.spend_rate * dt, true)
 				p.timer -= dt
 				if p.timer <= 0.0:
 					_exit_ped(p, _satisfaction(p.target, p.type))
@@ -1147,6 +1239,8 @@ func _update_cars(dt: float) -> void:
 		elif c.dropped and c.stop_t < 1.6:
 			c.stop_t += dt
 			desired = 0.0
+		if not fp.is_empty():
+			desired = minf(desired, _fp_cars(c))
 		for p: Ped in peds.values():
 			if absf(p.pos.y) < 4.3 and absf(p.pos.y - c.z) < 2.8:
 				var ahead: float = (p.pos.x - c.x) * c.dir
@@ -1193,6 +1287,298 @@ func _spawn_car(drop_target: int) -> void:
 
 
 # =============================================================================
+# Режим «Хозяин»: игроки ходят по улице от первого лица
+# =============================================================================
+## Казино 0 стоит в z = −DOOR_Z фасадом к +z, казино 1 развёрнуто на 180°.
+func to_world(t: int, l: Vector3) -> Vector3:
+	var k := 1.0 if t == 0 else -1.0
+	return Vector3(k * l.x, l.y, sgn(t) * DOOR_Z + k * l.z)
+
+
+func to_local_t(t: int, w: Vector3) -> Vector3:
+	var k := 1.0 if t == 0 else -1.0
+	return Vector3(k * w.x, w.y, k * (w.z - sgn(t) * DOOR_Z))
+
+
+func spot_pos(t: int, spot: String) -> Vector3:
+	return to_world(t, SPOT[spot])
+
+
+func spawn_pos(t: int, slot: int) -> Vector3:
+	return to_world(t, Vector3(-2.5 + slot * 5.0, 0.3, 4.5))
+
+
+func hand_price(t: int, role: String, id: String) -> int:
+	return int(price(t, role, "sabotage", id) * HAND_DISCOUNT)
+
+
+## Пустая строка — можно подбросить руками. Цена ниже, чем через «пульт».
+func hand_can(t: int, role: String, id: String) -> String:
+	var err := can(t, role, "sabotage", id)
+	if err == "Мало денег" and teams[t].money >= hand_price(t, role, id):
+		return ""
+	return err
+
+
+## Надбавка к риску, если рядом стоит кто-то из команды соседа.
+func witness_bonus(t: int, pos: Vector3) -> float:
+	for id in fp:
+		var e: Dictionary = fp[id]
+		var pl: Dictionary = Net.players.get(id, {})
+		if pl.is_empty() or int(pl.team) == t or Time.get_ticks_msec() - int(e.t) > FP_STALE_MS:
+			continue
+		if (e.p as Vector3).distance_to(pos) < 8.0:
+			return 0.3
+	return 0.0
+
+
+func steal_chance(t: int, role: String, pos: Vector3) -> float:
+	var e := 1 - t
+	var c := 0.15
+	if has(e, "cameras"):
+		c += 0.2
+	if has(e, "guards"):
+		c += 0.3
+	if has(e, "detective"):
+		c += 0.15
+	if role == "saboteur":
+		c -= 0.07
+	return clampf(c + witness_bonus(t, pos), 0.05, 0.9)
+
+
+func is_ko(peer: int) -> bool:
+	return Time.get_ticks_msec() < int(_ko_until.get(peer, 0)) - int(KO_PROT * 1000.0)
+
+
+## Свой игрок сообщает, где он стоит (20 раз в секунду).
+func fp_send(pos: Vector3, yaw: float, flags: int) -> void:
+	_store_fp(multiplayer.get_unique_id(), pos, yaw, flags)
+	if networked:
+		_rpc_fp.rpc(pos, yaw, flags)
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func _rpc_fp(pos: Vector3, yaw: float, flags: int) -> void:
+	_store_fp(multiplayer.get_remote_sender_id(), pos, yaw, flags)
+
+
+func _store_fp(id: int, pos: Vector3, yaw: float, flags: int) -> void:
+	fp[id] = {"p": pos, "yaw": yaw, "f": flags, "t": Time.get_ticks_msec()}
+
+
+func _fp_event_peer(peer: int, kind: String, data: Dictionary) -> void:
+	if peer == multiplayer.get_unique_id() or not networked:
+		fp_event.emit(kind, data)
+	else:
+		_rpc_fp_event.rpc_id(peer, kind, data)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_fp_event(kind: String, data: Dictionary) -> void:
+	fp_event.emit(kind, data)
+
+
+func _near(pos: Vector3, t: int, spot: String) -> bool:
+	var s := spot_pos(t, spot)
+	return Vector2(pos.x - s.x, pos.z - s.z).length() < SPOT_R + 0.6
+
+
+func _fp_cooldown(peer: int, key: String, sec: float) -> bool:
+	var k := "%d:%s" % [peer, key]
+	var now := Time.get_ticks_msec()
+	if now < int(_fp_cd.get(k, 0)):
+		return true
+	_fp_cd[k] = now + int(sec * 1000.0)
+	return false
+
+
+func _fp_action(peer: int, t: int, role: String, a: Dictionary, who: String) -> String:
+	if not fp.has(peer):
+		return "Сначала выйдите на улицу (Tab)"
+	if is_ko(peer):
+		return "Вы в нокауте"
+	var pos: Vector3 = fp[peer].p
+	var st: Dictionary = teams[t]
+	var e := 1 - t
+	var en: Dictionary = teams[e]
+	var op := String(a.get("op", ""))
+	var arg = a.get("arg", "")
+	match op:
+		"collect":
+			if not _near(pos, t, "till"):
+				return "Подойдите к своей кассе"
+			var amount := float(st.till)
+			if amount < 1.0:
+				return "Касса пуста"
+			st.till = 0.0
+			st.money += amount
+			_popup(t, "+" + Defs.money(amount) + " в сейф", "money")
+			_toast_peer(peer, "Выручка в сейфе: +%s" % Defs.money(amount), "good")
+			_fp_event_peer(peer, "cash", {"amount": amount})
+		"fix":
+			var id := String(arg)
+			if not FIX_SPOT.has(id) or not has_eff(t, id):
+				return "Чинить нечего"
+			if not _near(pos, t, FIX_SPOT[id]):
+				return "Подойдите ближе"
+			st.effects.erase(id)
+			st.rep = minf(100.0, st.rep + 1.0)
+			st.stats.fixed += 1
+			_ev("%s лично разобрался: «%s» в «%s» больше нет." % [who if who != "" else "Хозяин", Defs.sab_by_id[id].name, st.name], "good", t)
+			_fx(t, "cleanup")
+			_fp_event_peer(peer, "fixed", {"id": id})
+		"plant":
+			var spot := String(arg)
+			if not HAND_SAB.has(spot):
+				return "?"
+			if not _near(pos, e, spot):
+				return "Подойдите к казино соседа"
+			var sid: String = HAND_SAB[spot]
+			var err := hand_can(t, role, sid)
+			if err != "":
+				return err
+			var cost := hand_price(t, role, sid)
+			st.money -= cost
+			_sabotage(t, role, sid, cost, witness_bonus(t, pos), peer)
+			_appeal_cache[e] = _calc_breakdown(e)
+		"steal":
+			if not _near(pos, e, "till"):
+				return "Подойдите к кассе соседа"
+			if float(en.till) < 1.0:
+				return "Касса соседа пуста. Обидно."
+			if _fp_cooldown(peer, "steal", 25.0):
+				return "Кассир ещё косится на вас. Подождите."
+			if randf() < steal_chance(t, role, pos):
+				var fine: float = 150.0 * st.level
+				st.money -= fine
+				st.rep = maxf(0.0, st.rep - 4.0)
+				st.stats.sab_caught += 1
+				en.stats.caught_enemy += 1
+				en.revenge = mini(3, int(en.revenge) + 1)
+				_ev("ПОЙМАН! %s из «%s» лез в кассу «%s». Штраф %s, репутация −4." % [who, st.name, en.name, Defs.money(fine)], "caught", e)
+				_fx(t, "caught")
+				_popup(t, "ВОР!", "bad")
+				_fp_event_peer(peer, "kicked", {"team": e, "why": "Охрана «%s» вышвырнула вас на дорогу!" % en.name})
+			else:
+				var take := float(en.till) * STEAL_SHARE
+				en.till = float(en.till) - take
+				st.money += take
+				st.stats.stolen += take
+				_attacked[e] = 30.0
+				_ev("Из кассы «%s» пропало %s. Кассир клянётся, что отвернулся на секунду." % [en.name, Defs.money(take)], "sabotage", t)
+				_popup(e, "−" + Defs.money(take) + " из кассы", "bad")
+				_fp_event_peer(peer, "cash", {"amount": take})
+		"lure":
+			var p: Ped = _ped16(int(arg))
+			if p == null or p.type == "brawler" or p.state in [QUEUE, INSIDE]:
+				return "Не до флаеров ему"
+			if Vector2(pos.x - p.pos.x, pos.z - p.pos.y).length() > 3.2:
+				return "Подойдите ближе"
+			if p.state == GOING and p.target == t:
+				return "Он и так идёт к вам"
+			if has_eff(t, "road_op"):
+				return "К вам не пройти — ремонт дороги"
+			if _fp_cooldown(peer, "lure", 0.8):
+				return ""
+			if st.money < LURE_COST:
+				return "Мало денег"
+			st.money -= LURE_COST
+			var stolen := p.state == GOING and p.target == e
+			p.dir = 1 if randf() < 0.5 else -1
+			_route(p, t)
+			p.tag = "lured"
+			st.stats.lured += 1
+			_say(p, "lured", 1.0)
+			if stolen:
+				_popup(t, "Переманил!", "good")
+		"punch":
+			if _fp_cooldown(peer, "punch", 0.4):
+				return ""
+			var target := int(a.get("peer", 0))
+			if target > 0:
+				return _punch_player(peer, target, pos, who)
+			var p: Ped = _ped16(int(a.get("ped", -1)))
+			if p == null or Vector2(pos.x - p.pos.x, pos.z - p.pos.y).length() > 2.8 or p.state == INSIDE:
+				return ""
+			_say(p, "punched", 1.0)
+			if p.state == QUEUE:
+				teams[p.target].rep = maxf(0.0, teams[p.target].rep - 0.4)
+			p.dir = 1 if randf() < 0.5 else -1
+			p.speed *= 1.6
+			_to_street(p)
+			# драка у собственных дверей — позор заведению
+			if absf(to_local_t(t, pos).x) < 18.0 and to_local_t(t, pos).z > -10.0 and to_local_t(t, pos).z < 10.0:
+				st.rep = maxf(0.0, st.rep - 0.5)
+		_:
+			return "?"
+	_send_state()
+	return ""
+
+
+func _punch_player(peer: int, target: int, pos: Vector3, who: String) -> String:
+	var tp: Dictionary = Net.players.get(target, {})
+	if tp.is_empty() or not fp.has(target) or Time.get_ticks_msec() < int(_ko_until.get(target, 0)):
+		return ""
+	if (fp[target].p as Vector3).distance_to(pos) > 2.8:
+		return ""
+	var dir := ((fp[target].p as Vector3) - pos)
+	dir.y = 0.0
+	_hits[target] = int(_hits.get(target, 0)) + 1
+	if int(_hits[target]) >= HIT_KO:
+		_hits[target] = 0
+		_ko_until[target] = Time.get_ticks_msec() + int((KO_TIME + KO_PROT) * 1000.0)
+		var me: Dictionary = Net.players.get(peer, {})
+		if not me.is_empty():
+			teams[int(me.team)].stats.ko += 1
+		_fp_event_peer(target, "ko", {"dir": dir.normalized(), "by": who})
+		_ev("НОКАУТ! %s уложил %s прямо на улице. Прохожие снимают на телефон." % [who, String(tp.name)], "big", int(me.get("team", 0)))
+	else:
+		_fp_event_peer(target, "hit", {"dir": dir.normalized()})
+	return ""
+
+
+func _fp_cars(c: Car) -> float:
+	# Машины тормозят перед игроками, а зазевавшихся сбивают.
+	var desired := c.speed
+	var now := Time.get_ticks_msec()
+	for id in fp:
+		var e: Dictionary = fp[id]
+		if now - int(e.t) > FP_STALE_MS:
+			continue
+		var p: Vector3 = e.p
+		if absf(p.z) > 4.2 or absf(p.z - c.z) > 1.5 or p.y > 1.5:
+			continue
+		var ahead: float = (p.x - c.x) * c.dir
+		if ahead > 2.6 and ahead < 9.0:
+			desired = 0.0
+			if not _fp_cooldown(id, "horn", 3.0):
+				_fp_event_peer(id, "horn", {"pos": Vector3(c.x, 0.5, c.z)})
+		elif ahead > -0.4 and ahead <= 2.6 and c.cur > 3.0:
+			if not _fp_cooldown(id, "car", 2.0):
+				_fp_event_peer(id, "car", {"dir": Vector3(c.dir, 0, 0), "speed": c.cur})
+				var pl: Dictionary = Net.players.get(id, {})
+				if not pl.is_empty():
+					_say_near(Vector2(p.x, p.z), "car_hit")
+			desired = 0.0
+	return desired
+
+
+## Снимки передают id пешехода в 16 битах.
+func _ped16(id: int) -> Ped:
+	for p: Ped in peds.values():
+		if (p.id & 0xFFFF) == id:
+			return p
+	return null
+
+
+func _say_near(pos: Vector2, key: String) -> void:
+	for p: Ped in peds.values():
+		if p.state != INSIDE and Vector2(p.pos.x, p.pos.y).distance_to(pos) < 12.0:
+			_say(p, key, 1.0)
+			return
+
+
+# =============================================================================
 # ИИ
 # =============================================================================
 func _ai(t: int, dt: float) -> void:
@@ -1203,6 +1589,9 @@ func _ai(t: int, dt: float) -> void:
 	_ai_t[t] = [4.5, 2.6, 1.5][diff] * randf_range(0.7, 1.3)
 	var st: Dictionary = teams[t]
 	var R := "boss"
+	# ИИ не ходит по улице — кассу забирает инкассатор, пока она не переполнилась.
+	if float(st.till) > float(st.till_cap) * [0.9, 0.7, 0.5][diff]:
+		_inkasso(t)
 	var bad := 0
 	for e in PHYSICAL:
 		if has_eff(t, e):

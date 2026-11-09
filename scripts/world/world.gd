@@ -5,6 +5,8 @@ const B := preload("res://scripts/world/build.gd")
 const CasinoView := preload("res://scripts/world/casino_view.gd")
 const PersonView := preload("res://scripts/world/person_view.gd")
 const CarView := preload("res://scripts/world/car_view.gd")
+const Character := preload("res://scripts/kit/character.gd")
+const FpPlayer := preload("res://scripts/fp/fp_player.gd")
 
 const SHOPS := ["ЛОМБАРД 24/7", "МИКРОЗАЙМЫ", "ШАУРМА", "РИТУАЛЬНЫЕ УСЛУГИ", "СКУПКА ЗОЛОТА", "ПИВО • ВОДЫ",
 	"КРЕДИТ ЗА 5 МИНУТ", "ЮРИСТ ПО БАНКРОТСТВУ", "АПТЕКА", "ОБМЕН ВАЛЮТ", "ТАТУ", "ПРОДАМ ПОЧКУ", "ЗАЛОГ АВТО",
@@ -13,6 +15,8 @@ const NEON := [Color(1, 0.2, 0.4), Color(0.2, 0.9, 1), Color(1, 0.8, 0.2), Color
 
 var casinos: Array = []
 var ents := {}
+var avatars := {}
+var _colliders: StaticBody3D
 var _seen := {}
 var _last_sweep := 0
 var font_title: Font
@@ -23,6 +27,7 @@ var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	Game.world = self
 	_rng.seed = 1337
 	font_title = load("res://fonts/RussoOne-Regular.ttf")
 	font_body = load("res://fonts/Rubik.ttf")
@@ -30,6 +35,7 @@ func _ready() -> void:
 	_build_ground()
 	_build_road()
 	_build_city()
+	_build_colliders()
 	for t in 2:
 		var c: Node3D = CasinoView.new()
 		add_child(c)
@@ -216,6 +222,7 @@ func _shop(pos: Vector3, w: float, side: int, text: String) -> void:
 		var aw := B.box(n, Vector3(w * 0.85, 0.08, 1.4), Vector3(0, 2.75, 0.75), B.mat(c.darkened(0.4), 0.7))
 		aw.rotation.x = 0.3
 	B.light(n, Vector3(0, 2.6, 1.6), c, 1.0, 5.5)
+	_shop_collider(pos, w, -1 if side < 0 else 1)
 
 
 # =============================================================================
@@ -253,6 +260,7 @@ func _on_ents(arr: PackedFloat32Array) -> void:
 				node.setup(int(arr[b + 2]), font_title)
 			node.position = pos
 			node.rotation.y = arr[b + 6]
+			node.set_meta("id", id)
 			ents[id] = node
 		node.target_pos = pos
 		node.target_yaw = arr[b + 6]
@@ -263,11 +271,14 @@ func _on_ents(arr: PackedFloat32Array) -> void:
 
 
 # Снимки приходят порциями и могут теряться — убираем только давно не обновлявшиеся сущности.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_update_avatars(delta)
 	var now := Time.get_ticks_msec()
 	if now - _last_sweep < 150:
 		return
 	_last_sweep = now
+	_lod()
+	_ambient()
 	for id in ents.keys():
 		if now - int(_seen.get(id, 0)) > 450:
 			ents[id].queue_free()
@@ -332,3 +343,161 @@ func _on_fx(t: int, name: String) -> void:
 		Sfx.play("win", -4.0)
 	elif name in ["cleanup", "pr", "party"]:
 		Sfx.play("good", -4.0 if mine else -12.0)
+
+
+# =============================================================================
+# Режим «Хозяин»: коллизии, аватары игроков, LOD людей, звуковой фон
+# =============================================================================
+func _build_colliders() -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = Game.L_WORLD
+	body.collision_mask = 0
+	add_child(body)
+	var add := func(size: Vector3, pos: Vector3) -> void:
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size = size
+		cs.shape = sh
+		cs.position = pos
+		body.add_child(cs)
+	# дорога (верх на 0) и тротуары/участки (верх на 0.18)
+	add.call(Vector3(240, 1.0, 8.0), Vector3(0, -0.5, 0))
+	for s in [-1, 1]:
+		add.call(Vector3(240, 1.0, 60.0), Vector3(0, -0.32, s * 34.0))
+	# границы, за которые не уйти
+	for s in [-1, 1]:
+		add.call(Vector3(1.0, 12.0, 80.0), Vector3(s * 76.0, 6.0, 0))
+		add.call(Vector3(160.0, 12.0, 1.0), Vector3(0, 6.0, s * 30.0))
+	# столбы фонарей и деревья
+	for x in [-55.0, -33.0, -11.0, 11.0, 33.0, 55.0]:
+		for s in [-1, 1]:
+			add.call(Vector3(0.3, 6.0, 0.3), Vector3(x, 3.0, s * 4.45))
+	for x in [-66.0, -44.0, -22.0, 22.0, 44.0, 66.0]:
+		for s in [-1, 1]:
+			add.call(Vector3(1.6, 1.2, 1.6), Vector3(x, 0.6, s * 6.6))
+	_colliders = body
+
+
+func _shop_collider(pos: Vector3, w: float, side: int) -> void:
+	B.solid(self, Vector3(w, 10.0, 9.0), pos + Vector3(0, 5.0, side * 4.5))
+
+
+## Ближайший прохожий перед игроком (для флаеров и подзатыльников).
+func ped_in_front(me: Vector3, fwd: Vector2, reach: float) -> Node3D:
+	var best: Node3D = null
+	var best_d := reach
+	for id in ents:
+		var n: Node3D = ents[id]
+		if not (n is PersonView) or n.type == "brawler":
+			continue
+		var d := Vector2(n.position.x - me.x, n.position.z - me.z)
+		var dist := d.length()
+		if dist > best_d or absf(n.position.y - me.y) > 1.2:
+			continue
+		if dist > 0.5 and fwd.dot(d / dist) < 0.55:
+			continue
+		best_d = dist
+		best = n
+	return best
+
+
+## Ближайший игрок чужой команды перед нами (peer id или 0).
+func player_in_front(me: Vector3, fwd: Vector2, reach: float, my_team: int) -> int:
+	var best := 0
+	var best_d := reach
+	for id in avatars:
+		var pl: Dictionary = Net.players.get(id, {})
+		if pl.is_empty() or int(pl.team) == my_team:
+			continue
+		var a: Node3D = avatars[id]
+		var d := Vector2(a.position.x - me.x, a.position.z - me.z)
+		var dist := d.length()
+		if dist > best_d or dist < 0.01 or fwd.dot(d / dist) < 0.5:
+			continue
+		best_d = dist
+		best = id
+	return best
+
+
+func _update_avatars(delta: float) -> void:
+	var me := multiplayer.get_unique_id()
+	var now := Time.get_ticks_msec()
+	for id in Game.fp:
+		if id == me or not Net.players.has(id):
+			continue
+		var e: Dictionary = Game.fp[id]
+		var a: Node3D = avatars.get(id)
+		if a == null:
+			var pl: Dictionary = Net.players[id]
+			a = Node3D.new()
+			a.set_script(Character)
+			add_child(a)
+			a.build(FpPlayer.look_for(id, int(pl.team), String(pl.role)))
+			a.add_tag("%s · %s" % [String(pl.name), Defs.TEAM_SHORT[int(pl.team)]], Defs.TEAM_COLORS[int(pl.team)])
+			a.position = e.p
+			avatars[id] = a
+		var to: Vector3 = e.p
+		a.position = a.position.lerp(to, minf(1.0, delta * 12.0)) if a.position.distance_to(to) < 6.0 else to
+		a.rotation.y = lerp_angle(a.rotation.y, float(e.yaw) + PI, minf(1.0, delta * 12.0))
+		var f := int(e.f)
+		if f & FpPlayer.F_KO:
+			a.anim = "ko"
+		elif f & FpPlayer.F_PUNCH:
+			a.anim = "punch"
+		elif f & FpPlayer.F_WORK:
+			a.anim = "repair"
+		elif f & FpPlayer.F_STUN:
+			a.anim = "stumble"
+		elif f & FpPlayer.F_RUN:
+			a.anim = "run"
+			a.speed = 6.5
+		elif f & FpPlayer.F_MOVE:
+			a.anim = "walk"
+			a.speed = 3.5
+		elif f & FpPlayer.F_FP:
+			a.anim = "idle"
+		else:
+			a.anim = "type"
+	for id in avatars.keys():
+		if not Game.fp.has(id) or not Net.players.has(id) or now - int(Game.fp[id].t) > Game.FP_STALE_MS * 3:
+			avatars[id].queue_free()
+			avatars.erase(id)
+
+
+## Дальние люди не анимируются, совсем дальние — прячутся (как LOD в Jackpot Hotel).
+func _lod() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cp := cam.global_position
+	for c in get_tree().get_nodes_in_group("lod_char"):
+		var n := c as Node3D
+		var d2 := n.global_position.distance_squared_to(cp)
+		var vis := d2 < 110.0 * 110.0
+		if n.visible != vis:
+			n.visible = vis
+		var pm := Node.PROCESS_MODE_INHERIT if d2 < 32.0 * 32.0 else Node.PROCESS_MODE_DISABLED
+		if n.process_mode != pm:
+			n.process_mode = pm
+	for id in ents:
+		var pv = ents[id]
+		if pv is PersonView:
+			var d := (pv.position as Vector3).distance_to(cp)
+			pv.set_detail(d < (28.0 if pv.detailed else 24.0))
+
+
+func _ambient() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or Game.demo:
+		Sfx.ambient(0, "", -80.0)
+		Sfx.ambient(1, "", -80.0)
+		return
+	var cp := cam.global_position
+	var inside := false
+	for t in 2:
+		var l := Game.to_local_t(t, cp)
+		if absf(l.x) < 9.0 and l.z < 0.2 and l.z > -10.0 and l.y < 4.6:
+			inside = true
+	var close := cp.y < 12.0
+	Sfx.ambient(0, "city_amb", (-14.0 if not inside else -26.0) if close else -22.0)
+	Sfx.ambient(1, "amb_casino", -10.0 if inside else -80.0)

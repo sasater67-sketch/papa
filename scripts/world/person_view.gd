@@ -2,6 +2,7 @@ extends Node3D
 ## Визуал пешехода. Двигается к целевой точке из снимка хоста и анимирует шаг.
 
 const B := preload("res://scripts/world/build.gd")
+const Character := preload("res://scripts/kit/character.gd")
 
 const SKIN := [Color(1.0, 0.82, 0.68), Color(0.87, 0.65, 0.48), Color(0.62, 0.43, 0.3), Color(0.42, 0.28, 0.2)]
 const CLOTH := [Color(0.8, 0.2, 0.25), Color(0.2, 0.4, 0.85), Color(0.95, 0.75, 0.2), Color(0.25, 0.7, 0.4),
@@ -19,10 +20,87 @@ var _bubble: Label3D
 var _bubble_t := 0.0
 var _visual: Node3D
 var _font: Font
+# Вблизи (от первого лица) вместо коробочного человечка — живой персонаж из Jackpot Hotel.
+var detailed := false
+var _seed := 0
+var _detail: Node3D
+var _chars: Array = []
+
+
+func set_detail(on: bool) -> void:
+	if on == detailed:
+		return
+	detailed = on
+	if on and _detail == null:
+		_build_detail()
+	_detail.visible = on
+	_visual.visible = not on
+
+
+func _build_detail() -> void:
+	_detail = Node3D.new()
+	add_child(_detail)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed
+	var l: Dictionary
+	match type:
+		"family":
+			_add_char(Character.npc_look(rng), Vector3.ZERO)
+			for k in 2:
+				var kid := Character.random_look(rng)
+				kid.scale = 0.6
+				kid.hat = 0
+				_add_char(kid, Vector3([0.62, -0.6][k], 0, [-0.15, -0.1][k]))
+			return
+		"vip":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "tux", "hat": "tophat", "face": "mustache", "body": 1, "shirt": Color("141418"), "pants": Color("0e0e12")}, true)
+		"drunk":
+			l = {"ref": "alco"}
+		"cheater":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "hoodie", "face": "shades", "hat": "beanie", "shirt": Color("26262c")}, true)
+		"brawler":
+			l = {"ref": "gopnik" if _seed % 2 == 0 else "skinhead", "scale": 1.06}
+		"guard":
+			l = {"skin": 1, "hair": 0, "hair_color": 0, "hat": "guard", "face": 3, "shirt": Color("15151a"), "pants": Color("101014"), "outfit": "suit", "body": 1, "build": 3}
+		"dealer":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "vest", "shirt": Color("e8e8e8"), "pants": Color("141418"), "hat": 0}, true)
+		"lawyer":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "suit", "shirt": Color("4a4e58"), "pants": Color("2e3036"), "hat": 0, "face": "glasses"}, true)
+		"detective":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "suit", "shirt": Color("8a6e48"), "pants": Color("4a3e2e"), "hat": "fedora", "face": "mustache", "body": 1}, true)
+		"cleaner":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "apron", "shirt": Color("2e8a4e"), "pants": Color("1e5a34"), "hat": "cap"}, true)
+		"dancer":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "hawaii", "shirt": Color("e83ac8"), "pants": Color("e8d040"), "hat": "party"}, true)
+		"reporter":
+			l = Character.random_look(rng)
+			l.merge({"outfit": "", "shirt": Color("3a5a9a"), "hat": 0}, true)
+		_:
+			l = Character.npc_look(rng)
+	_add_char(l, Vector3.ZERO)
+
+
+func _add_char(l: Dictionary, off: Vector3) -> void:
+	var c := Node3D.new()
+	c.set_script(Character)
+	_detail.add_child(c)
+	c.position = off
+	c.build(l)
+	c.anim = "idle"
+	_chars.append(c)
+	c.add_to_group("lod_char")
 
 
 func setup(p_type: String, seed: int, font: Font) -> void:
 	type = p_type
+	_seed = seed
 	_font = font
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
@@ -156,6 +234,18 @@ func _process(delta: float) -> void:
 		f[3].rotation.x = -sw * 0.5
 		f[4].rotation.x = sw * 0.5
 		f[0].position.y = absf(cos(_phase)) * 0.04 if moving else 0.0
+	if detailed:
+		var an := "walk" if moving else "idle"
+		if type == "drunk":
+			an = "stumble" if moving else "dizzy"
+			_detail.rotation.z = sin(_t * 2.3) * 0.08
+		elif type == "brawler":
+			an = "run" if moving else "flail"
+		elif not moving:
+			an = {"guard": "guard", "dealer": "deal", "dancer": "dance", "cleaner": "mop", "reporter": "point", "detective": "point"}.get(type, "idle")
+		for c in _chars:
+			c.anim = an
+			c.speed = 2.2 if type != "brawler" else 4.5
 	match type:
 		"drunk":
 			_visual.rotation.z = sin(_t * 2.3) * 0.18

@@ -13,7 +13,7 @@ var volume := 0.8:
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	for i in 10:
+	for i in 16:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_players.append(p)
@@ -33,10 +33,55 @@ func _ready() -> void:
 	_streams["win"] = _tone([[523, 0.15], [523, 0.08], [784, 0.15], [1046, 0.5]], 0.4, "saw")
 	_streams["lose"] = _tone([[392, 0.25], [370, 0.25], [349, 0.25], [330, 0.7]], 0.4, "saw")
 	_streams["chat"] = _tone([[1046, 0.04], [1318, 0.06]], 0.2, "sine")
+	_streams["horn"] = _tone([[415, 0.18], [0, 0.06], [415, 0.4]], 0.3, "square")
+
+
+	for i in 2:
+		var m := AudioStreamPlayer.new()
+		add_child(m)
+		_music.append(m)
+	for i in 2:
+		var a := AudioStreamPlayer.new()
+		a.volume_db = -80.0
+		add_child(a)
+		_amb.append(a)
+
+
+const SFX_DIR := "res://assets/audio/sfx/"
+const MUSIC_DIR := "res://assets/audio/music/"
+var _files := {}
+var _music: Array[AudioStreamPlayer] = []
+var _music_on := 0
+var _music_name := ""
+var _amb: Array[AudioStreamPlayer] = []
+var _amb_names := ["", ""]
+
+
+## Звук из assets/audio/sfx (name.wav и варианты name_1.wav, name_2.wav…) — из Jackpot Hotel.
+func file_stream(name: String) -> AudioStream:
+	if not _files.has(name):
+		var list := []
+		for p in [SFX_DIR + name + ".wav"]:
+			if ResourceLoader.exists(p):
+				list.append(load(p))
+		var i := 1
+		while ResourceLoader.exists(SFX_DIR + "%s_%d.wav" % [name, i]):
+			list.append(load(SFX_DIR + "%s_%d.wav" % [name, i]))
+			i += 1
+		_files[name] = list
+	var arr: Array = _files[name]
+	return null if arr.is_empty() else arr[randi() % arr.size()]
+
+
+func _stream(name: String) -> AudioStream:
+	if _streams.has(name):
+		return _streams[name]
+	return file_stream(name)
 
 
 func play(name: String, vol_db := 0.0, pitch := 1.0) -> void:
-	if not _streams.has(name):
+	var st := _stream(name)
+	if st == null:
 		return
 	var now := Time.get_ticks_msec()
 	if now - int(_last.get(name, -1000)) < 60:
@@ -44,11 +89,68 @@ func play(name: String, vol_db := 0.0, pitch := 1.0) -> void:
 	_last[name] = now
 	for p in _players:
 		if not p.playing:
-			p.stream = _streams[name]
+			p.stream = st
 			p.volume_db = vol_db
 			p.pitch_scale = pitch
 			p.play()
 			return
+
+
+func play_3d(name: String, pos: Vector3, vol_db := 0.0, pitch := 1.0, max_dist := 30.0) -> void:
+	var st := _stream(name)
+	if st == null or Game.world == null or not is_instance_valid(Game.world):
+		return
+	var p := AudioStreamPlayer3D.new()
+	p.stream = st
+	p.volume_db = vol_db
+	p.pitch_scale = pitch
+	p.max_distance = max_dist
+	p.unit_size = 6.0
+	Game.world.add_child(p)
+	p.global_position = pos
+	p.finished.connect(p.queue_free)
+	p.play()
+
+
+## Музыка с плавной сменой. Пустое имя — тишина.
+func music(name: String, vol_db := -12.0, fade := 1.5) -> void:
+	if name == _music_name:
+		return
+	_music_name = name
+	var old := _music[_music_on]
+	_music_on = 1 - _music_on
+	var nw := _music[_music_on]
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(old, "volume_db", -60.0, fade)
+	tw.chain().tween_callback(old.stop)
+	var path := MUSIC_DIR + name + ".ogg"
+	if name == "" or not ResourceLoader.exists(path):
+		return
+	var st: AudioStream = load(path)
+	if st is AudioStreamOggVorbis:
+		(st as AudioStreamOggVorbis).loop = true
+	nw.stream = st
+	nw.volume_db = -60.0
+	nw.play()
+	create_tween().tween_property(nw, "volume_db", vol_db, fade)
+
+
+## Фоновые петли: слот 0 — улица, слот 1 — зал казино. Громкость меняется плавно каждый кадр.
+func ambient(slot: int, name: String, vol_db: float) -> void:
+	var p := _amb[slot]
+	if _amb_names[slot] != name:
+		_amb_names[slot] = name
+		var st := file_stream(name) if name != "" else null
+		if st is AudioStreamWAV:
+			st = (st as AudioStreamWAV).duplicate()
+			st.loop_mode = AudioStreamWAV.LOOP_FORWARD
+			st.loop_end = int(st.get_length() * st.mix_rate)
+		p.stream = st
+		if st:
+			p.play()
+		else:
+			p.stop()
+	p.volume_db = lerpf(p.volume_db, vol_db, 0.08)
 
 
 func _wav(data: PackedFloat32Array) -> AudioStreamWAV:

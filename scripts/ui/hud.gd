@@ -4,9 +4,22 @@ extends CanvasLayer
 const T := preload("res://scripts/ui/ui_theme.gd")
 
 var cam: Node3D
+var player: Node3D
+var match_node: Node
 var my := 0
 var en := 1
 var role := "boss"
+var fp_on := false
+var tablet := false
+var _side: Control
+var _bottom: Control
+var _fp_layer: Control
+var _prompt: Label
+var _hold_bar: ProgressBar
+var _ko: ColorRect
+var _ko_label: Label
+var _flash: ColorRect
+var _fp_btn: Button
 
 var _root: Control
 var _top := [{}, {}]
@@ -19,6 +32,7 @@ var _revenge: Label
 var _tabs: TabContainer
 var _cards: Array = []
 var _upgrade := {}
+var _till := {}
 var _breakdown: RichTextLabel
 var _stats: RichTextLabel
 var _sab_risk_note: Label
@@ -55,6 +69,7 @@ func _ready() -> void:
 	_root.add_child(_toasts)
 	_build_pause()
 	_build_help()
+	_build_fp()
 	Game.state_updated.connect(_refresh)
 	Game.event_logged.connect(_on_event)
 	Game.toast.connect(_on_toast)
@@ -64,7 +79,7 @@ func _ready() -> void:
 	var who := "Вы играете за «%s»" % Defs.TEAM_NAMES[my]
 	if role != "boss":
 		who += " — роль: %s" % Defs.ROLES[role].name
-	_add_feed("[color=#ffc847]%s. Соседи — «%s» напротив. Развивайтесь и пакостите! [F1] — помощь.[/color]" % [who, Defs.TEAM_NAMES[en]])
+	_add_feed("[color=#ffc847]%s. Соседи — «%s» напротив. Развивайтесь и пакостите! [F1] — помощь, [Tab] — выйти на улицу самому.[/color]" % [who, Defs.TEAM_NAMES[en]])
 	_on_toast("Добро пожаловать в войну! Вы — «%s»" % Defs.TEAM_NAMES[my], "big")
 
 
@@ -179,6 +194,7 @@ func _build_side() -> void:
 	side.offset_top = 200
 	side.offset_bottom = -62
 	_root.add_child(side)
+	_side = side
 	_tabs = TabContainer.new()
 	_tabs.tab_changed.connect(func(_i): Sfx.play("click", -8.0))
 	side.add_child(_tabs)
@@ -226,6 +242,23 @@ func _tab_casino() -> Control:
 	ub.pressed.connect(func(): _act("upgrade", ""))
 	uv.add_child(ub)
 	_upgrade = {"title": ut, "req": ureq, "unl": uunl, "btn": ub}
+	# Касса: забрать самому (режим «Хозяин») или вызвать инкассатора
+	var tp := T.panel(Color(0.03, 0.09, 0.05, 0.95), T.GOOD, 1, 10)
+	v.add_child(tp)
+	var tv := VBoxContainer.new()
+	tp.add_child(tv)
+	var tl := T.lbl("", 16, T.GOOD, true)
+	tv.add_child(tl)
+	var tn := T.lbl("30%% выручки зала копится в кассе. Заберите сами ([Tab] → к кассе → E) или вызовите инкассатора — он берёт %d%%." % int(Game.INKASSO_FEE * 100), 13, T.DIM)
+	tn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tv.add_child(tn)
+	var tb := Button.new()
+	tb.custom_minimum_size = Vector2(0, 38)
+	tb.pressed.connect(func():
+		Sfx.play("click", -6.0)
+		Game.request({"a": "inkasso"}))
+	tv.add_child(tb)
+	_till = {"label": tl, "btn": tb}
 	v.add_child(_header("Способности", T.GOLD))
 	for a in Defs.ABILITIES:
 		v.add_child(_card(a.icon, Color(0.4, 0.85, 1.0), a.name, a.desc, "ability", a.id, "Перезарядка %d с" % a.cd))
@@ -406,6 +439,12 @@ func _build_bottom() -> void:
 	h.add_theme_constant_override("separation", 8)
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(h)
+	_bottom = h
+	_fp_btn = Button.new()
+	_fp_btn.text = "[Tab] Выйти на улицу"
+	_fp_btn.focus_mode = Control.FOCUS_NONE
+	_fp_btn.pressed.connect(func(): _toggle_fp())
+	h.add_child(_fp_btn)
 	for b in [["[1] Моё казино", "own"], ["[2] Соседи", "enemy"], ["[3] Обзор", "overview"]]:
 		var btn := Button.new()
 		btn.text = b[0]
@@ -427,15 +466,151 @@ func _build_bottom() -> void:
 
 
 func _cam(p: String) -> void:
+	if fp_on:
+		_toggle_fp()
 	if cam:
 		cam.preset(p, my)
 	Sfx.play("click", -8.0)
 
 
 # =============================================================================
+# Режим «Хозяин» (от первого лица)
+# =============================================================================
+const FP_HINT := "WASD — идти • Shift — бег • Пробел — прыжок • E — действие (держать — долгое) • ЛКМ — удар • V — вид со спины • B — планшет • Tab — карта"
+
+
+func _build_fp() -> void:
+	_fp_layer = Control.new()
+	_fp_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fp_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fp_layer.visible = false
+	_root.add_child(_fp_layer)
+	_root.move_child(_fp_layer, 0)
+	_flash = ColorRect.new()
+	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flash.color = Color(0.9, 0.05, 0.05, 0.0)
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fp_layer.add_child(_flash)
+	var cross := Control.new()
+	cross.set_anchors_preset(Control.PRESET_CENTER)
+	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fp_layer.add_child(cross)
+	for r in [Rect2(-9, -1, 6, 2), Rect2(3, -1, 6, 2), Rect2(-1, -9, 2, 6), Rect2(-1, 3, 2, 6)]:
+		var c := ColorRect.new()
+		c.position = r.position
+		c.size = r.size
+		c.color = Color(1, 1, 1, 0.85)
+		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cross.add_child(c)
+	_prompt = T.shadowed(T.lbl("", 20, T.TEXT, true), 8)
+	_prompt.set_anchors_preset(Control.PRESET_CENTER)
+	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prompt.offset_left = -420
+	_prompt.offset_right = 420
+	_prompt.offset_top = 40
+	_prompt.offset_bottom = 72
+	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_fp_layer.add_child(_prompt)
+	_hold_bar = ProgressBar.new()
+	_hold_bar.set_anchors_preset(Control.PRESET_CENTER)
+	_hold_bar.offset_left = -130
+	_hold_bar.offset_right = 130
+	_hold_bar.offset_top = 82
+	_hold_bar.offset_bottom = 96
+	_hold_bar.max_value = 1.0
+	_hold_bar.show_percentage = false
+	_hold_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0, 0, 0, 0.6)
+	bg.set_corner_radius_all(4)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = T.GOLD
+	fill.set_corner_radius_all(4)
+	_hold_bar.add_theme_stylebox_override("background", bg)
+	_hold_bar.add_theme_stylebox_override("fill", fill)
+	_fp_layer.add_child(_hold_bar)
+	var hint := T.shadowed(T.lbl(FP_HINT, 14, Color(1, 1, 1, 0.8)), 5)
+	hint.anchor_left = 0.0
+	hint.anchor_right = 1.0
+	hint.anchor_top = 1.0
+	hint.anchor_bottom = 1.0
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hint.offset_left = 620
+	hint.offset_right = -14
+	hint.offset_top = -52
+	hint.offset_bottom = -8
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_fp_layer.add_child(hint)
+	_ko = ColorRect.new()
+	_ko.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ko.color = Color(0.05, 0.0, 0.08, 0.7)
+	_ko.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ko.visible = false
+	_fp_layer.add_child(_ko)
+	_ko_label = T.shadowed(T.lbl("", 46, T.BAD, true), 10)
+	_ko_label.set_anchors_preset(Control.PRESET_CENTER)
+	_ko_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_ko_label.offset_left = -500
+	_ko_label.offset_right = 500
+	_ko_label.offset_top = -60
+	_ko_label.offset_bottom = 60
+	_ko.add_child(_ko_label)
+
+
+func _toggle_fp() -> void:
+	if match_node and _end == null:
+		match_node.set_fp(not fp_on)
+		Sfx.play("click", -8.0)
+
+
+func set_fp(on: bool) -> void:
+	fp_on = on
+	tablet = false
+	_fp_layer.visible = on
+	_side.visible = not on
+	_fp_btn.text = "[Tab] Карта" if on else "[Tab] Выйти на улицу"
+	for c in _bottom.get_children():
+		c.visible = not on or c == _fp_btn
+	if on:
+		_on_toast("Вы на улице! E — касса, починка и пакости соседу, ЛКМ — удар, B — планшет", "info")
+
+
+func _update_fp() -> void:
+	var overlays := _pause.visible or _help.visible or _end != null or _chat.has_focus()
+	var want_capture := fp_on and not tablet and not overlays
+	var mode := Input.MOUSE_MODE_CAPTURED if want_capture else Input.MOUSE_MODE_VISIBLE
+	if Input.mouse_mode != mode and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = mode
+	if player == null:
+		return
+	player.controls = want_capture
+	if not fp_on:
+		return
+	_side.visible = tablet
+	var f: Dictionary = player.focus
+	_prompt.text = String(f.get("prompt", ""))
+	var c := T.TEXT
+	if not bool(f.get("ok", true)):
+		c = T.DIM
+	elif bool(f.get("bad", false)):
+		c = Color(1.0, 0.6, 0.35)
+	elif String(f.get("op", "")) in ["collect", "fix"]:
+		c = T.GOOD
+	_prompt.add_theme_color_override("font_color", c)
+	_hold_bar.visible = player.hold > 0.0
+	_hold_bar.value = player.hold
+	_ko.visible = player.ko_t > 0.0
+	if _ko.visible:
+		_ko_label.text = "НОКАУТ!\nОчнётесь через %d…" % ceili(player.ko_t)
+	_flash.color.a = clampf(player.flash, 0.0, 1.0) * 0.45
+
+
+# =============================================================================
 # Обновление
 # =============================================================================
 func _process(delta: float) -> void:
+	_update_fp()
 	if Game.teams.size() == 2:
 		_timer.text = Defs.time_str(Game.time_left)
 		if Game.time_left < 60.0 and Game.running:
@@ -500,6 +675,12 @@ func _refresh() -> void:
 func _refresh_cards() -> void:
 	var st: Dictionary = Game.teams[my]
 	var est: Dictionary = Game.teams[en]
+	var till := float(st.get("till", 0.0))
+	var full := till >= float(st.get("till_cap", 1.0)) - 0.5
+	_till.label.text = ("КАССА ПОЛНА: %s — больше не копится!" if full else "В кассе: %s") % Defs.money(till)
+	_till.label.add_theme_color_override("font_color", T.BAD if full else T.GOOD)
+	_till.btn.text = "Инкассатор: +%s" % Defs.money(till * (1.0 - Game.INKASSO_FEE))
+	_till.btn.disabled = till < 1.0
 	for c in _cards:
 		var err := Game.can(my, role, c.kind, c.id)
 		var price := Game.price(my, role, c.kind, c.id)
@@ -777,7 +958,11 @@ func _build_help() -> void:
 	r.fit_content = true
 	r.custom_minimum_size = Vector2(800, 0)
 	r.text = HELP_TEXT
-	v.add_child(r)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(820, 600)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.add_child(r)
+	v.add_child(sc)
 	_btn(v, "Понятно, идём пакостить", func(): _toggle("help"))
 
 
@@ -793,7 +978,14 @@ const HELP_TEXT := """[color=#ffc847][b]Цель:[/b][/color] к концу та
 
 [color=#8cff9a][b]Защита:[/b][/color] камеры, охрана, детектив ловят. Чистильщик, юрист и PR смягчают удары. Экстренная уборка и PR-кампания снимают эффекты.
 
-[color=#9fd8ff][b]Управление:[/b][/color] ПКМ — вращать камеру, колесо — зум, WASD/СКМ — двигать, Q/E — поворот, [b]1/2/3[/b] — моё казино / соседи / обзор, [b]Enter[/b] — чат, [b]F1[/b] — помощь, [b]Esc[/b] — меню."""
+[color=#9fd8ff][b]Управление (карта):[/b][/color] ПКМ — вращать камеру, колесо — зум, WASD/СКМ — двигать, Q/E — поворот, [b]1/2/3[/b] — моё казино / соседи / обзор, [b]Enter[/b] — чат, [b]F1[/b] — помощь, [b]Esc[/b] — меню.
+
+[color=#ffc847][b]Режим «Хозяин» — [Tab]:[/b][/color] выйдите на улицу от первого лица. WASD, Shift — бег, пробел — прыжок, V — вид со спины, [b]B[/b] — планшет со стройкой и пакостями.
+• [b]Касса:[/b] 30% выручки зала копится в кассе у дальней стены. Подойдите и нажмите E. Полная касса больше не копит!
+• [b]Починка руками:[/b] тараканы — у дверей, вонь — у кондиционера, музыка — у щитка, потоп — у двери WC. Держите E — бесплатно и +1 репутации.
+• [b]Пакости руками:[/b] у казино соседа — тараканы под дверь, рыба в кондиционер, щиток. Вдвое дешевле пульта, но если рядом хозяин-сосед — риск +30%.
+• [b]Касса соседа:[/b] держите E у его кассы — унесёте половину. Камеры, охрана и детектив ловят. Поймали — штраф и вас вышвырнут на дорогу.
+• [b]Флаер[/b] (E у прохожего, $15) — человек пойдёт к вам. [b]ЛКМ[/b] — подзатыльник: прохожий убежит, сосед после трёх ударов — в нокауте. На дороге смотрите по сторонам — машины сбивают."""
 
 
 func _toggle(which: String) -> void:
@@ -806,6 +998,7 @@ func _toggle(which: String) -> void:
 
 
 func _to_menu() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	get_tree().paused = false
 	Net.close()
 	Game.stop()
@@ -861,8 +1054,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match k:
 		KEY_ESCAPE:
-			if _end == null:
+			if tablet:
+				tablet = false
+			elif _end == null:
 				_toggle("menu")
+		KEY_TAB:
+			_toggle_fp()
+		KEY_B:
+			if fp_on:
+				tablet = not tablet
+				Sfx.play("phone_open" if tablet else "phone_close", -6.0)
+			else:
+				return
 		KEY_F1:
 			_toggle("help")
 		KEY_ENTER, KEY_KP_ENTER:

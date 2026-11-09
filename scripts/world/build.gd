@@ -378,3 +378,24 @@ static func burst(parent: Node, pos: Vector3, color: Color, amount := 60, speed 
 	p.emitting = true
 	p.finished.connect(p.queue_free)
 	return p
+
+
+## Невидимое препятствие для игрока от первого лица.
+static func solid(parent: Node, size: Vector3, pos: Vector3, rot_y := 0.0) -> StaticBody3D:
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = size
+	cs.shape = sh
+	b.add_child(cs)
+	b.position = pos
+	b.rotation.y = rot_y
+	parent.add_child(b)
+	return b
+
+
+static func set_solid(n: Node, on: bool) -> void:
+	for b in n.find_children("*", "StaticBody3D", true, false):
+		(b as StaticBody3D).collision_layer = 1 if on else 0

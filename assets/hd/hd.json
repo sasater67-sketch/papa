@@ -1,0 +1,652 @@
+{
+"asphalt": {
+"f": "asphalt",
+"m": [
+4,
+4
+],
+"n": true,
+"ns": 1.0
+},
+"brass": {
+"f": "brass",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0,
+"metal": 1.0
+},
+"brick": {
+"f": "brick",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"carpet_blue": {
+"f": "carpet_blue",
+"m": [
+1.5,
+1.5
+],
+"n": true,
+"ns": 1.0
+},
+"carpet_casino": {
+"f": "carpet_casino",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"carpet_purple": {
+"f": "carpet_purple",
+"m": [
+1.5,
+1.5
+],
+"n": true,
+"ns": 1.0
+},
+"carpet_red": {
+"f": "carpet_red",
+"m": [
+1.5,
+1.5
+],
+"n": true,
+"ns": 1.0
+},
+"ceil_dark": {
+"f": "ceil_dark",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"ceil_white": {
+"f": "ceil_white",
+"m": [
+1.2,
+1.2
+],
+"n": true,
+"ns": 1.0
+},
+"ceil_wood": {
+"f": "ceil_wood",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"chrome": {
+"f": "chrome",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0,
+"metal": 1.0
+},
+"concrete": {
+"f": "concrete",
+"m": [
+3,
+3
+],
+"n": true,
+"ns": 1.0
+},
+"concrete_dark": {
+"f": "concrete_dark",
+"m": [
+3,
+3
+],
+"n": true,
+"ns": 1.0
+},
+"curb": {
+"f": "curb",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"fabric": {
+"f": "fabric",
+"m": [
+0.25,
+0.25
+],
+"n": true,
+"ns": 1.0
+},
+"fabric_white": {
+"f": "fabric_white",
+"m": [
+0.25,
+0.25
+],
+"n": true,
+"ns": 1.0
+},
+"facade": {
+"f": "facade",
+"m": [
+3,
+3
+],
+"n": true,
+"ns": 1.0
+},
+"facade_brick": {
+"f": "facade_brick",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"felt_blue": {
+"f": "felt_blue",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"felt_green": {
+"f": "felt_green",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"felt_purple": {
+"f": "felt_purple",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"felt_red": {
+"f": "felt_red",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"floor_bar": {
+"f": "floor_bar",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"floor_casino": {
+"f": "floor_casino",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"floor_checker": {
+"f": "floor_checker",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.4
+},
+"floor_herringbone": {
+"f": "floor_herringbone",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.3
+},
+"floor_planks": {
+"f": "floor_planks",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"floor_tech": {
+"f": "floor_tech",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"metal": 0.6
+},
+"gold": {
+"f": "gold",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0,
+"metal": 1.0
+},
+"grass": {
+"f": "grass",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"leather": {
+"f": "leather",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"leather_black": {
+"f": "leather_black",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"leather_red": {
+"f": "leather_red",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"leaves": {
+"f": "leaves",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"leaves_dark": {
+"f": "leaves_dark",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"marble_black": {
+"f": "marble_black",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.6
+},
+"marble_green": {
+"f": "marble_green",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.5
+},
+"marble_white": {
+"f": "marble_white",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.5
+},
+"metal_brushed": {
+"f": "metal_brushed",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0,
+"metal": 1.0
+},
+"metal_dark": {
+"f": "metal_dark",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0,
+"metal": 0.7
+},
+"metal_plates": {
+"f": "metal_plates",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"metal": 0.8
+},
+"paint": {
+"f": "paint",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"paving": {
+"f": "paving",
+"m": [
+3,
+3
+],
+"n": true,
+"ns": 1.0
+},
+"plaster": {
+"f": "plaster",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"plastic_black": {
+"f": "plastic_black",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"plastic_red": {
+"f": "plastic_red",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"plastic_white": {
+"f": "plastic_white",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"roof_tar": {
+"f": "roof_tar",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"rubber": {
+"f": "rubber",
+"m": [
+0.5,
+0.5
+],
+"n": true,
+"ns": 1.0
+},
+"sidewalk": {
+"f": "sidewalk",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"soil": {
+"f": "soil",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"steel": {
+"f": "steel",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0,
+"metal": 0.9
+},
+"stone": {
+"f": "stone",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"terrazzo": {
+"f": "terrazzo",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.4
+},
+"tiles_dark": {
+"f": "tiles_dark",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.3
+},
+"tiles_white": {
+"f": "tiles_white",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.6
+},
+"wall_bedroom": {
+"f": "wall_bedroom",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"wall_damask_purple": {
+"f": "wall_damask_purple",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wall_damask_red": {
+"f": "wall_damask_red",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wall_damask_teal": {
+"f": "wall_damask_teal",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wall_stripes_cream": {
+"f": "wall_stripes_cream",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wall_tech": {
+"f": "wall_tech",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0,
+"metal": 0.3
+},
+"wall_velvet": {
+"f": "wall_velvet",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"wall_wood_panel": {
+"f": "wall_wood_panel",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"wall_wood_panel_dark": {
+"f": "wall_wood_panel_dark",
+"m": [
+2,
+2
+],
+"n": true,
+"ns": 1.0
+},
+"wood_crate": {
+"f": "wood_crate",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wood_dark": {
+"f": "wood_dark",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.3
+},
+"wood_light": {
+"f": "wood_light",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0
+},
+"wood_mid": {
+"f": "wood_mid",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.3
+},
+"wood_red": {
+"f": "wood_red",
+"m": [
+1,
+1
+],
+"n": true,
+"ns": 1.0,
+"clear": 0.4
+}
+}

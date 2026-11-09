@@ -1,7 +1,8 @@
 extends Node3D
-## Визуал машины / такси.
+## Визуал машины / такси. Кузова по фото-референсам из Jackpot Hotel: «Матиз», Suzuki Swift, Lada Vesta.
 
 const B := preload("res://scripts/world/build.gd")
+const RC := preload("res://scripts/kit/ref_cars.gd")
 const COLORS := [Color(0.75, 0.08, 0.1), Color(0.1, 0.25, 0.7), Color(0.85, 0.85, 0.88), Color(0.08, 0.08, 0.1),
 	Color(0.2, 0.55, 0.3), Color(0.45, 0.45, 0.5)]
 
@@ -13,6 +14,27 @@ var _wheels: Array = []
 
 func setup(sub: int, font: Font) -> void:
 	var taxi := sub == 10
+	var kind: String = "matiz" if taxi else RC.KINDS[sub % RC.KINDS.size()]
+	var mesh := RC.mesh(kind)
+	if mesh != null:
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		# у кузова вперёд = +X, у нас машина едет вдоль +Z
+		mi.rotation.y = -PI * 0.5
+		add_child(mi)
+		var h := 1.5
+		for sx in [-0.62, 0.62]:
+			B.box(self, Vector3(0.3, 0.12, 0.04), Vector3(sx, 0.7, RC.car_len(kind) * 0.5 - 0.05), B.neon(Color(1, 0.95, 0.8), 3.0), false)
+		if taxi:
+			B.box(self, Vector3(0.7, 0.25, 0.35), Vector3(0, h + 0.12, -0.2), B.neon(Color(1, 0.95, 0.6), 2.5))
+			var labels := B.sign2(self, "TAXI", Vector3(0, h + 0.12, -0.2), 48, Color(0.1, 0.1, 0.1), Color(1, 0.9, 0.4), 0.006, font)
+			for l in labels:
+				l.rotation.y += PI * 0.5
+		return
+	_box_car(sub, taxi, font)
+
+
+func _box_car(sub: int, taxi: bool, font: Font) -> void:
 	var col: Color = Color(1.0, 0.78, 0.1) if taxi else COLORS[sub % COLORS.size()]
 	var body := B.mat(col, 0.25, 0.6)
 	B.box(self, Vector3(1.8, 0.6, 4.3), Vector3(0, 0.55, 0), body)
@@ -30,7 +52,6 @@ func setup(sub: int, font: Font) -> void:
 		var labels := B.sign2(self, "TAXI", Vector3(0, 1.5, -0.2), 48, Color(0.1, 0.1, 0.1), Color(1, 0.9, 0.4), 0.006, font)
 		for l in labels:
 			l.rotation.y += PI * 0.5
-		B.box(self, Vector3(1.82, 0.12, 4.32), Vector3(0, 0.75, 0), B.mat(Color(0.1, 0.1, 0.1)))
 
 
 func _process(delta: float) -> void:

@@ -18,6 +18,8 @@ var _solo := {"duration": 20, "ai": 1}
 func _ready() -> void:
 	get_tree().paused = false
 	Game.start_demo()
+	Sfx.music("menu", -14.0)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	add_child(World.new())
 	cam = CamRig.new()
 	cam.auto_orbit = true

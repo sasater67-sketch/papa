@@ -3,6 +3,10 @@ extends Node3D
 
 const B := preload("res://scripts/world/build.gd")
 const PV := preload("res://scripts/world/person_view.gd")
+const Hall := preload("res://scripts/world/hall.gd")
+const GROUND_H := 4.6
+
+var _hall: Node3D
 
 var team := 0
 var level := 0
@@ -87,15 +91,36 @@ func _build_tower() -> void:
 		"base_color": col.darkened(0.82), "trim_color": col, "window_color": Color(1.0, 0.82, 0.5).lerp(col, 0.25),
 		"lit_ratio": 0.6, "window_energy": 1.25, "seed": float(team) * 3.7 + 1.0, "trim_energy": 0.5, "cell": Vector2(2.25, 1.6)})
 	_tower = B.box(self, Vector3(18, 1, 10), Vector3(0, 0.5, -5), _tower_mat)
-	# Стеклянное лобби первого этажа
-	B.box(self, Vector3(17.4, 4.1, 0.1), Vector3(0, 2.25, 0.03), B.mat(Color(0.25, 0.15, 0.05), 0.1, 0.4, Color(1.0, 0.75, 0.4), 1.4))
+	# Первый этаж — зал, в который можно зайти. Снаружи — стены здания и стеклянная витрина.
+	for sx in [-1, 1]:
+		B.box(self, Vector3(0.1, GROUND_H, 10), Vector3(sx * 8.95, GROUND_H * 0.5, -5), _tower_mat)
+	B.box(self, Vector3(18, GROUND_H, 0.1), Vector3(0, GROUND_H * 0.5, -9.95), _tower_mat)
+	var glass := B.glass(Color(1.0, 0.85, 0.6).lerp(col, 0.2), 0.16)
+	for sx in [-1, 1]:
+		B.box(self, Vector3(7.2, 4.2, 0.05), Vector3(sx * 5.1, 2.3, 0.03), glass, false)
+	B.box(self, Vector3(3.0, 1.1, 0.05), Vector3(0, 3.85, 0.03), glass, false)
 	for i in 7:
+		if i == 3:
+			continue
 		var x := -7.5 + i * 2.5
 		B.box(self, Vector3(0.18, 4.3, 0.2), Vector3(x, 2.2, 0.1), B.mat(col.darkened(0.5), 0.3, 0.8))
 	B.box(self, Vector3(18.3, 0.3, 0.35), Vector3(0, 4.55, 0.12), B.neon(col, 3.5))
-	# Двери
-	B.box(self, Vector3(3.4, 3.6, 0.3), Vector3(0, 1.9, 0.12), B.mat(Color(0.8, 0.6, 0.2), 0.2, 1.0))
-	B.box(self, Vector3(2.8, 3.1, 0.32), Vector3(0, 1.75, 0.12), B.mat(Color(0.3, 0.12, 0.02), 0.1, 0.0, Color(1, 0.7, 0.35), 3.0))
+	# Рама дверей
+	var gold := B.mat(Color(0.8, 0.6, 0.2), 0.2, 1.0)
+	B.box(self, Vector3(3.4, 0.3, 0.3), Vector3(0, 3.45, 0.12), gold)
+	for sx in [-1, 1]:
+		B.box(self, Vector3(0.2, 3.3, 0.3), Vector3(sx * 1.6, 1.85, 0.12), gold)
+	# Кондиционер и электрощиток: соседи подкидывают сюда тухлую рыбу и портят музыку
+	var ac := Game.SPOT.ac
+	B.box(self, Vector3(1.1, 0.75, 0.5), Vector3(ac.x, 3.1, 0.32), B.mat(Color(0.82, 0.84, 0.86), 0.4, 0.3))
+	B.cyl(self, 0.28, 0.28, 0.04, Vector3(ac.x - 0.2, 3.1, 0.58), B.mat(Color(0.2, 0.2, 0.22), 0.5, 0.6), 14).rotation.x = PI * 0.5
+	B.box(self, Vector3(0.06, 2.9, 0.06), Vector3(ac.x + 0.45, 1.55, 0.18), B.mat(Color(0.6, 0.6, 0.62), 0.4, 0.8))
+	var panel := Game.SPOT.panel
+	B.box(self, Vector3(0.8, 1.0, 0.2), Vector3(panel.x, 3.0, 0.22), B.mat(Color(0.45, 0.47, 0.5), 0.5, 0.6))
+	B.label(self, "⚡ ЩИТОК", Vector3(panel.x, 3.0, 0.34), 32, Color(1.0, 0.85, 0.1), Color.BLACK, 0.008, font_title)
+	_hall = Hall.new()
+	add_child(_hall)
+	_hall.setup(team, col, "wall_damask_red" if team == 0 else "wall_damask_teal")
 	# Неоновые углы — растут с уровнем
 	for sx in [-1, 1]:
 		var strip := B.box(self, Vector3(0.22, 1, 0.22), Vector3(sx * 9.05, 0.5, 0.05), B.neon(acc, 4.0), false)
@@ -170,8 +195,8 @@ func _set_height(lvl: int, animate: bool) -> void:
 
 func _apply_height(h: float) -> void:
 	height = h
-	_tower.scale.y = h
-	_tower.position.y = h * 0.5
+	_tower.scale.y = h - GROUND_H
+	_tower.position.y = GROUND_H + (h - GROUND_H) * 0.5
 	for s in _scalers:
 		s.scale.y = h
 		s.position.y = h * 0.5
@@ -201,6 +226,7 @@ func _npc(parent: Node3D, type: String, pos: Vector3, yaw := 0.0) -> Node3D:
 	var p: Node3D = PV.new()
 	parent.add_child(p)
 	p.setup(type, randi(), font_body)
+	p.set_detail(true)
 	p.position = pos
 	p.target_pos = pos
 	p.rotation.y = yaw
@@ -230,11 +256,14 @@ func _build_modules() -> void:
 	# --- Автоматы
 	m = _mod("slots")
 	_slot_row(m, -8.4, false)
+	B.solid(m, Vector3(5.8, 2.6, 0.8), Vector3(-6.3, 1.3, 1.6))
 	m = _mod("slots2")
 	_slot_row(m, 3.6, true)
+	B.solid(m, Vector3(5.8, 2.6, 0.8), Vector3(5.7, 1.3, 1.6))
 	# --- Бар
 	m = _mod("bar")
 	B.box(m, Vector3(6, 4, 8), Vector3(-12.6, 2.0, -3.0), B.mat(Color(0.25, 0.12, 0.06), 0.8))
+	B.solid(m, Vector3(6, 4, 8), Vector3(-12.6, 2.0, -3.0))
 	B.box(m, Vector3(5.2, 2.2, 0.1), Vector3(-12.6, 1.6, 1.02), B.mat(Color(0.2, 0.1, 0.03), 0.1, 0.0, Color(1, 0.55, 0.2), 1.6))
 	B.box(m, Vector3(6.3, 0.3, 8.3), Vector3(-12.6, 4.1, -3.0), B.mat(Color(0.12, 0.08, 0.05)))
 	for l in B.sign2(m, "BAR", Vector3(-12.6, 3.3, 1.1), 130, Color(2.6, 1.3, 0.4), Color(0.6, 0.1, 0.0), 0.01, font_title):
@@ -244,6 +273,7 @@ func _build_modules() -> void:
 	# --- Туалет
 	m = _mod("toilet")
 	B.box(m, Vector3(1.8, 2.5, 1.8), Vector3(-16.4, 1.43, 4.0), B.mat(Color(0.2, 0.45, 0.85), 0.5))
+	B.solid(m, Vector3(1.8, 2.6, 1.8), Vector3(-16.4, 1.3, 4.0))
 	B.box(m, Vector3(1.0, 1.9, 0.06), Vector3(-16.4, 1.15, 4.92), B.mat(Color(0.9, 0.9, 0.95), 0.4))
 	B.label(m, "WC", Vector3(-16.4, 2.4, 4.95), 72, Color(2, 2, 2.4), Color(0.1, 0.2, 0.6), 0.01, font_title)
 	# --- Музыка
@@ -257,6 +287,7 @@ func _build_modules() -> void:
 		B.cyl(sp, 0.17, 0.17, 0.06, Vector3(0, 1.4, 0.41), B.mat(Color(0.15, 0.15, 0.18), 0.4, 0.5)).rotation.x = PI * 0.5
 		B.box(sp, Vector3(0.96, 0.06, 0.82), Vector3(0, 1.9, 0), B.neon(Color(0.6, 0.4, 1.0), 4.0), false)
 		_speakers.append(sp)
+		B.solid(m, Vector3(0.95, 2.0, 0.8), Vector3(sx * 3.0, 1.1, 0.8))
 	# --- Аромат
 	m = _mod("aroma")
 	for sx in [-1, 1]:
@@ -266,6 +297,7 @@ func _build_modules() -> void:
 	# --- Фонтан
 	m = _mod("fountain")
 	B.cyl(m, 2.0, 2.2, 0.6, Vector3(-7.0, 0.48, 5.4), B.mat(Color(0.6, 0.58, 0.55), 0.6), 24)
+	B.solid(m, Vector3(3.6, 1.2, 3.6), Vector3(-7.0, 0.6, 5.4))
 	B.cyl(m, 1.8, 1.8, 0.05, Vector3(-7.0, 0.76, 5.4), B.mat(Color(0.1, 0.35, 0.6), 0.02, 0.2, Color(0.1, 0.4, 0.8), 0.8), 24)
 	B.cyl(m, 0.25, 0.35, 1.6, Vector3(-7.0, 1.3, 5.4), B.mat(Color(0.65, 0.62, 0.58), 0.5), 12)
 	B.sphere(m, 0.35, Vector3(-7.0, 2.2, 5.4), B.mat(Color(1, 0.8, 0.2), 0.2, 1.0, Color(1, 0.7, 0.2), 0.8), false, 12)
@@ -275,6 +307,7 @@ func _build_modules() -> void:
 	# --- Ресторан
 	m = _mod("restaurant")
 	B.box(m, Vector3(6, 4, 8), Vector3(12.6, 2.0, -3.0), B.mat(Color(0.5, 0.42, 0.35), 0.8))
+	B.solid(m, Vector3(6, 4, 8), Vector3(12.6, 2.0, -3.0))
 	B.box(m, Vector3(5.2, 2.4, 0.1), Vector3(12.6, 1.6, 1.02), B.mat(Color(0.2, 0.1, 0.03), 0.1, 0.0, Color(1, 0.8, 0.5), 1.4))
 	for i in 8:
 		var c := Color(0.85, 0.1, 0.1) if i % 2 == 0 else Color(0.95, 0.95, 0.9)
@@ -288,7 +321,7 @@ func _build_modules() -> void:
 		B.cyl(m, 0.05, 1.4, 0.5, Vector3(tx, 3.0, 4.2), B.mat(Color(0.9, 0.2, 0.2), 0.7), 12)
 		B.light(m, Vector3(tx, 2.2, 4.2), Color(1, 0.75, 0.45), 0.8, 4.0)
 	# --- Отель — отдельная логика (_hotel)
-	_mod("hotel")
+	B.solid(_mod("hotel"), Vector3(14, 60, 7), Vector3(0, 30, -13.6))
 	# --- VIP
 	m = _mod("vip")
 	B.box(m, Vector3(2.2, 0.03, 8.8), Vector3(0, 0.21, 4.6), B.mat(Color(0.6, 0.02, 0.06), 0.9), false)
@@ -311,6 +344,7 @@ func _build_modules() -> void:
 		for k in 3:
 			B.box(m, Vector3(0.12, 0.08, 0.12), Vector3(tx - 0.4 + k * 0.4, 1.1, 5.9), B.mat([Color(0.9, 0.1, 0.1), Color(0.1, 0.1, 0.9), Color(0.1, 0.8, 0.2)][k], 0.4), false)
 		_npc(m, "dealer", Vector3(tx, 0.18, 4.3), 0.0)
+		B.solid(m, Vector3(2.1, 1.2, 2.1), Vector3(tx, 0.6, 5.6))
 		B.light(m, Vector3(tx, 2.6, 5.6), Color(1, 0.9, 0.7), 1.2, 4.5)
 	# --- Шоу на крыше
 	m = _mod("show")
@@ -331,6 +365,7 @@ func _build_modules() -> void:
 	# --- Лифт
 	m = _mod("lift")
 	_lift_shaft = B.box(m, Vector3(1.6, 1, 1.2), Vector3(7.6, 0.5, 0.65), B.glass(Color(0.6, 1, 1), 0.25), false)
+	B.solid(m, Vector3(1.6, 8.0, 1.2), Vector3(7.6, 4.0, 0.65))
 	_lift_cabin = Node3D.new()
 	m.add_child(_lift_cabin)
 	B.box(_lift_cabin, Vector3(1.4, 1.9, 1.0), Vector3(7.6, 1.0, 0.65), B.mat(Color(0.9, 1, 1), 0.1, 0.5, Color(0.6, 1, 1), 2.0), false)
@@ -372,6 +407,7 @@ func _build_modules() -> void:
 	m = _mod("pr")
 	for sx in [-1, 1]:
 		B.cyl(m, 0.1, 0.1, 4.4, Vector3(10.6 + sx * 2.0, 2.4, 8.4), B.mat(Color(0.3, 0.3, 0.32), 0.5, 0.8), 6)
+		B.solid(m, Vector3(0.3, 4.4, 0.3), Vector3(10.6 + sx * 2.0, 2.2, 8.4))
 	B.box(m, Vector3(5.6, 2.6, 0.25), Vector3(10.6, 4.6, 8.4), B.mat(Color(0.95, 0.95, 0.9), 0.6, 0.0, Color(1, 1, 0.95), 0.4))
 	_pr_label = B.label(m, "", Vector3(10.6, 4.6, 8.56), 64, Color(0.75, 0.05, 0.1), Color(1, 1, 1), 0.0085, font_title)
 	_pr_label.width = 600
@@ -383,6 +419,8 @@ func _build_modules() -> void:
 	m = _mod("detective")
 	_npc(m, "detective", Vector3(-3.0, 0.18, 8.5), 0.0)
 	B.box(m, Vector3(0.4, 0.8, 0.4), Vector3(-2.2, 0.6, 8.5), B.mat(Color(0.3, 0.25, 0.2)))
+	for id in _modules:
+		B.set_solid(_modules[id], false)
 
 
 func _reparent_to_roof(n: Node3D) -> void:
@@ -530,6 +568,7 @@ func _build_effects() -> void:
 	var beacon := B.sphere(exc, 0.15, Vector3(-0.6, 3.3, 0), B.neon(Color(1, 0.6, 0.0), 8.0), false, 8)
 	_blink_mats.append(beacon)
 	var rl := B.label(e, "РЕМОНТ ДОРОГИ\nПРОХОДА НЕТ", Vector3(0, 2.3, 8.25), 48, Color(1, 0.9, 0.2), Color.BLACK, 0.01, font_title)
+	B.solid(e, Vector3(11.0, 1.4, 0.5), Vector3(0, 0.7, 8.3))
 	rl.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	B.light(e, Vector3(0, 2.0, 9.5), Color(1, 0.6, 0.1), 2.0, 8.0)
 	# Война вывесок обрабатывается в apply_state
@@ -583,6 +622,8 @@ func _build_effects() -> void:
 	var pl2 := B.label(_police, "ПОЙМАН!", Vector3(0, 7.5, 4.0), 110, Color(2.6, 0.3, 0.3), Color(1, 1, 1), 0.012, font_title)
 	pl2.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_flash = B.light(self, Vector3(0, 4.0, 4.0), Color(1, 0.15, 0.1), 0.0, 20.0)
+	for id in _effects:
+		B.set_solid(_effects[id], false)
 
 
 # =============================================================================
@@ -598,8 +639,10 @@ func apply_state(st: Dictionary) -> void:
 		var n: Node3D = _modules[id]
 		if want != n.visible:
 			n.visible = want
+			B.set_solid(n, want)
 			if want and not first:
 				_pop(n)
+	_hall.apply_state(st)
 	_hotel.visible = st.built.has("hotel")
 	_hotel_sign.visible = _hotel.visible
 	var has_sign: bool = st.built.has("sign")
@@ -620,7 +663,9 @@ func apply_state(st: Dictionary) -> void:
 				l.modulate.a = 1.0
 	for id in _effects:
 		var on: bool = st.effects.has(id) or st.buffs.has(id)
-		_effects[id].visible = on
+		if _effects[id].visible != on:
+			_effects[id].visible = on
+			B.set_solid(_effects[id], on)
 	_tower_mat.set_shader_parameter("dim", 0.25 if st.effects.has("black_monday") else 1.0)
 
 

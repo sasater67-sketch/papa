@@ -14,6 +14,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 Defs="*res://scripts/autoload/defs.gd"
+Assets="*res://scripts/autoload/assets.gd"
 Sfx="*res://scripts/autoload/sfx.gd"
 Net="*res://scripts/autoload/net.gd"
 Game="*res://scripts/autoload/game.gd"
