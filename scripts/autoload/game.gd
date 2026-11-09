@@ -11,8 +11,49 @@ signal fx(team: int, fx_name: String)
 signal toast(text: String, kind: String)
 signal match_over(result: Dictionary)
 signal chat(sender: String, team: int, text: String)
+## События для своего игрока от первого лица: нокаут, сбила машина, выкинула охрана и т.п.
+signal fp_event(kind: String, data: Dictionary)
+signal settings_changed
 
 enum { WALK, GOING, QUEUE, INSIDE, LEAVE }
+
+# Слои физики (общие с китами Jackpot Hotel).
+const L_WORLD := 1
+const L_PLAYER := 2
+const L_NPC := 4
+const L_INTERACT := 8
+const L_TRIGGER := 16
+const C_GOLD := Color(1.0, 0.78, 0.28)
+const C_INFO := Color(0.6, 0.85, 1.0)
+const C_DIM := Color(0.62, 0.56, 0.72)
+
+# Режим «Хозяин» (от первого лица).
+const TILL_SHARE := 0.3      # доля выручки зала, которая копится в кассе
+const INKASSO_FEE := 0.25    # инкассатор с пульта забирает четверть
+const HIT_KO := 3
+const KO_TIME := 5.0
+const KO_PROT := 6.0
+const FP_STALE_MS := 3000
+# Точки взаимодействия в координатах казино: x вдоль фасада, z>0 — участок, z<0 — зал.
+const SPOT := {
+	"till": Vector3(0.0, 0.0, -8.4),
+	"wc": Vector3(7.4, 0.0, -8.6),
+	"door": Vector3(0.0, 0.0, 1.0),
+	"ac": Vector3(8.3, 0.0, 0.55),
+	"panel": Vector3(-8.3, 0.0, 0.45),
+}
+const FIX_SPOT := {"roaches": "door", "stink": "ac", "music_break": "panel", "plumbing": "wc"}
+const HAND_SAB := {"door": "roaches", "ac": "stink", "panel": "music_break"}
+
+## Настройки, которые читают киты Jackpot Hotel.
+var settings := {"fov": 75.0, "sensitivity": 0.22, "shake": true}
+## Узел мира — для объёмных звуков китов.
+var world: Node3D = null
+## peer -> {p: Vector3, yaw: float, f: int, t: msec}
+var fp := {}
+var _hits := {}
+var _ko_until := {}
+var _fp_cd := {}
 
 const DOOR_Z := 16.0
 const WALK_Z := 5.5
@@ -101,9 +142,14 @@ func _new_team(t: int) -> Dictionary:
 		"name": Defs.TEAM_NAMES[t], "money": float(Defs.START_MONEY), "rep": 50.0, "level": 1,
 		"built": {}, "defense": {}, "effects": {}, "buffs": {}, "cd": {},
 		"revenge": 0, "inside": 0, "queue": 0, "cap": 8, "income": 0.0, "appeal": 0.0, "breakdown": {},
-		"ai": false, "warn_bankrupt": false,
-		"stats": {"earned": 0.0, "clients": 0, "sab_ok": 0, "sab_caught": 0, "caught_enemy": 0, "invested": 0.0},
+		"ai": false, "warn_bankrupt": false, "till": 0.0, "till_cap": till_cap_for(1),
+		"stats": {"earned": 0.0, "clients": 0, "sab_ok": 0, "sab_caught": 0, "caught_enemy": 0, "invested": 0.0,
+			"fixed": 0, "lured": 0, "ko": 0, "stolen": 0.0},
 	}
+
+
+func till_cap_for(level: int) -> float:
+	return 450.0 + 380.0 * level
 
 
 func _reset() -> void:
@@ -120,6 +166,10 @@ func _reset() -> void:
 	_bankrupt = [0.0, 0.0]
 	_attacked = [0.0, 0.0]
 	last_ents = PackedFloat32Array()
+	fp.clear()
+	_hits.clear()
+	_ko_until.clear()
+	_fp_cd.clear()
 	for t in 2:
 		_appeal_cache[t] = _calc_breakdown(t)
 
@@ -449,7 +499,7 @@ func _tier_done(t: int) -> bool:
 
 func score(t: int) -> int:
 	var st: Dictionary = teams[t]
-	return int(st.money + st.stats.invested * 0.6 + st.rep * 300.0)
+	return int(st.money + float(st.get("till", 0.0)) + st.stats.invested * 0.6 + st.rep * 300.0)
 
 
 # =============================================================================
@@ -674,6 +724,7 @@ func _eco(dt: float) -> void:
 		_attacked[t] = maxf(0.0, _attacked[t] - dt)
 		st.queue = queues[t].size()
 		st.cap = capacity(t)
+		st.till_cap = till_cap_for(st.level)
 		_appeal_cache[t] = _calc_breakdown(t)
 		st.breakdown = _appeal_cache[t]
 		st.appeal = appeal(t, "normal")
@@ -707,12 +758,20 @@ func _eco(dt: float) -> void:
 			_pop_acc[t] = 0.0
 
 
-func _earn(t: int, amount: float) -> void:
-	teams[t].money += amount
+## till=true — выручка зала: часть уходит в кассу (её забирают руками или инкассатором),
+## а при полной кассе эта часть сгорает.
+func _earn(t: int, amount: float, till := false) -> void:
+	var st: Dictionary = teams[t]
+	var to_money := amount
+	if till and amount > 0.0:
+		var part := amount * TILL_SHARE
+		to_money -= part
+		st.till = minf(float(st.till) + part, float(st.till_cap))
+	st.money += to_money
 	_income_acc[t] += amount
 	_pop_acc[t] += amount
 	if amount > 0.0:
-		teams[t].stats.earned += amount
+		st.stats.earned += amount
 
 
 func _end_by_time() -> void:
@@ -930,7 +989,7 @@ func _update_peds(dt: float) -> void:
 					_say(p, "queue", 0.6)
 					_to_street(p)
 			INSIDE:
-				_earn(p.target, p.spend_rate * dt)
+				_earn(p.target, p.spend_rate * dt, true)
 				p.timer -= dt
 				if p.timer <= 0.0:
 					_exit_ped(p, _satisfaction(p.target, p.type))
